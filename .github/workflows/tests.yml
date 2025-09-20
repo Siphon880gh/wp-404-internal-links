@@ -1,0 +1,377 @@
+name: Tests and Coverage
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: dom, curl, libxml, mbstring, zip
+        tools: composer:v2
+        coverage: none
+    
+    - name: Cache Composer packages
+      id: composer-cache
+      uses: actions/cache@v3
+      with:
+        path: vendor
+        key: ${{ runner.os }}-php-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-php-
+    
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress
+    
+    - name: Run PHP CodeSniffer
+      run: composer run-script cs:check
+    
+    - name: Check PHP compatibility
+      run: vendor/bin/phpcs --standard=PHPCompatibility --runtime-set testVersion 7.4- --ignore=vendor/ .
+
+  unit-tests:
+    name: Unit Tests (PHP ${{ matrix.php-versions }})
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        php-versions: ['7.4', '8.0', '8.1', '8.2']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php-versions }}
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
+        tools: composer:v2
+        coverage: xdebug
+    
+    - name: Cache Composer packages
+      id: composer-cache
+      uses: actions/cache@v3
+      with:
+        path: vendor
+        key: ${{ runner.os }}-php-${{ matrix.php-versions }}-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-php-${{ matrix.php-versions }}-
+    
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress
+    
+    - name: Run unit tests
+      run: composer run-script test:unit
+    
+    - name: Upload unit test results
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: unit-test-results-${{ matrix.php-versions }}
+        path: test-results.xml
+
+  integration-tests:
+    name: Integration Tests (WordPress ${{ matrix.wordpress-versions }})
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: wordpress_test
+          MYSQL_USER: wp_user
+          MYSQL_PASSWORD: wp_pass
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        php-versions: ['8.1']
+        wordpress-versions: ['5.9', '6.0', '6.1', '6.2', 'latest']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php-versions }}
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, mysqli
+        tools: composer:v2
+        coverage: xdebug
+    
+    - name: Cache Composer packages
+      id: composer-cache
+      uses: actions/cache@v3
+      with:
+        path: vendor
+        key: ${{ runner.os }}-php-${{ matrix.php-versions }}-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-php-${{ matrix.php-versions }}-
+    
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress
+    
+    - name: Setup WordPress test environment
+      env:
+        WP_VERSION: ${{ matrix.wordpress-versions }}
+        WP_TESTS_DB_HOST: 127.0.0.1
+        WP_TESTS_DB_NAME: wordpress_test
+        WP_TESTS_DB_USER: wp_user
+        WP_TESTS_DB_PASS: wp_pass
+      run: |
+        bash bin/install-wp-tests.sh wordpress_test wp_user wp_pass 127.0.0.1 $WP_VERSION
+    
+    - name: Run integration tests
+      run: composer run-script test:integration
+    
+    - name: Upload integration test results
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: integration-test-results-wp-${{ matrix.wordpress-versions }}
+        path: test-results.xml
+
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
+        tools: composer:v2
+        coverage: xdebug
+    
+    - name: Cache Composer packages
+      id: composer-cache
+      uses: actions/cache@v3
+      with:
+        path: vendor
+        key: ${{ runner.os }}-php-8.1-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-php-8.1-
+    
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress
+    
+    - name: Run tests with coverage
+      run: composer run-script test:coverage
+    
+    - name: Generate coverage reports
+      run: php coverage-report.php
+    
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: true
+        verbose: true
+    
+    - name: Upload coverage to Coveralls
+      uses: coverallsapp/github-action@v2
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        path-to-lcov: ./coverage.xml
+    
+    - name: Upload HTML coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-html-report
+        path: coverage-html/
+    
+    - name: Upload coverage summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-reports
+        path: coverage-reports/
+    
+    - name: Check coverage thresholds
+      run: |
+        php coverage-report.php
+        if [ $? -ne 0 ]; then
+          echo "Coverage thresholds not met!"
+          exit 1
+        fi
+    
+    - name: Comment coverage on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const coverageReport = fs.readFileSync('coverage-reports/coverage-report.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: coverageReport
+          });
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: dom, curl, libxml, mbstring, zip
+        tools: composer:v2
+    
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress
+    
+    - name: Run security checker
+      run: |
+        composer require --dev sensiolabs/security-checker
+        vendor/bin/security-checker security:check composer.lock
+    
+    - name: Run Psalm static analysis
+      run: |
+        composer require --dev vimeo/psalm
+        vendor/bin/psalm --init
+        vendor/bin/psalm
+
+  performance:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: dom, curl, libxml, mbstring, zip
+        tools: composer:v2
+    
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress
+    
+    - name: Run performance benchmarks
+      run: |
+        # Create performance test script
+        cat > performance-test.php << 'EOF'
+        <?php
+        require_once 'plugin.php';
+        
+        $start = microtime(true);
+        
+        // Simulate large content processing
+        $plugin = new XnY_404_Links();
+        $reflection = new ReflectionClass($plugin);
+        $method = $reflection->getMethod('extract_links_from_content');
+        $method->setAccessible(true);
+        
+        $largeContent = str_repeat('<p><a href="https://example.com/link">Test Link</a></p>', 1000);
+        
+        for ($i = 0; $i < 100; $i++) {
+            $method->invokeArgs($plugin, [$largeContent, 1]);
+        }
+        
+        $end = microtime(true);
+        $duration = $end - $start;
+        
+        echo "Performance test completed in: " . round($duration, 3) . " seconds\n";
+        
+        if ($duration > 30) {
+            echo "Performance test FAILED: Took longer than 30 seconds\n";
+            exit(1);
+        } else {
+            echo "Performance test PASSED\n";
+            exit(0);
+        }
+        EOF
+        
+        php performance-test.php
+
+  deploy-docs:
+    name: Deploy Documentation
+    runs-on: ubuntu-latest
+    needs: [code-quality, coverage]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download coverage reports
+      uses: actions/download-artifact@v3
+      with:
+        name: coverage-reports
+        path: docs/coverage/
+    
+    - name: Download HTML coverage
+      uses: actions/download-artifact@v3
+      with:
+        name: coverage-html-report
+        path: docs/coverage/html/
+    
+    - name: Generate documentation
+      run: |
+        mkdir -p docs/api
+        # Generate API documentation (if needed)
+        echo "# API Documentation" > docs/api/README.md
+        echo "Generated on: $(date)" >> docs/api/README.md
+    
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./docs
+        force_orphan: true
+
+  notification:
+    name: Notification
+    runs-on: ubuntu-latest
+    needs: [code-quality, unit-tests, integration-tests, coverage, security, performance]
+    if: always()
+    
+    steps:
+    - name: Notify on success
+      if: ${{ needs.code-quality.result == 'success' && needs.unit-tests.result == 'success' && needs.integration-tests.result == 'success' && needs.coverage.result == 'success' && needs.security.result == 'success' && needs.performance.result == 'success' }}
+      run: |
+        echo "✅ All tests passed successfully!"
+        # Add webhook notification here if needed
+    
+    - name: Notify on failure
+      if: ${{ contains(needs.*.result, 'failure') }}
+      run: |
+        echo "❌ Some tests failed!"
+        echo "Code Quality: ${{ needs.code-quality.result }}"
+        echo "Unit Tests: ${{ needs.unit-tests.result }}"
+        echo "Integration Tests: ${{ needs.integration-tests.result }}"
+        echo "Coverage: ${{ needs.coverage.result }}"
+        echo "Security: ${{ needs.security.result }}"
+        echo "Performance: ${{ needs.performance.result }}"
+        # Add webhook notification here if needed

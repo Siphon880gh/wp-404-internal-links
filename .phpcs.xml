@@ -1,0 +1,92 @@
+<?xml version="1.0"?>
+<ruleset name="XnY 404 Links Coding Standards">
+    <description>Coding standards for XnY 404 Broken Internal Links plugin</description>
+
+    <!-- Files to check -->
+    <file>.</file>
+
+    <!-- Exclude patterns -->
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+    <exclude-pattern>*/node_modules/*</exclude-pattern>
+    <exclude-pattern>*/coverage-html/*</exclude-pattern>
+    <exclude-pattern>*/coverage-reports/*</exclude-pattern>
+    <exclude-pattern>*/tests/fixtures/*</exclude-pattern>
+    <exclude-pattern>*/assets/*</exclude-pattern>
+    <exclude-pattern>*/css/*</exclude-pattern>
+    <exclude-pattern>*/js/*</exclude-pattern>
+    <exclude-pattern>*/bin/*</exclude-pattern>
+    <exclude-pattern>*/.github/*</exclude-pattern>
+
+    <!-- Use PSR-12 as base standard -->
+    <rule ref="PSR12"/>
+
+    <!-- WordPress specific rules -->
+    <rule ref="WordPress-Core">
+        <!-- Exclude conflicting rules -->
+        <exclude name="WordPress.Files.FileName.InvalidClassFileName"/>
+        <exclude name="WordPress.Files.FileName.NotHyphenatedLowercase"/>
+        <exclude name="Generic.Arrays.DisallowShortArraySyntax"/>
+        <exclude name="WordPress.PHP.YodaConditions.NotYoda"/>
+        <exclude name="WordPress.Arrays.ArrayDeclarationSpacing.AssociativeArrayFound"/>
+    </rule>
+
+    <!-- WordPress documentation rules -->
+    <rule ref="WordPress-Docs"/>
+
+    <!-- WordPress extra rules -->
+    <rule ref="WordPress-Extra">
+        <exclude name="WordPress.Files.FileName.InvalidClassFileName"/>
+        <exclude name="WordPress.Files.FileName.NotHyphenatedLowercase"/>
+    </rule>
+
+    <!-- Security rules -->
+    <rule ref="WordPress.Security"/>
+
+    <!-- Performance rules -->
+    <rule ref="WordPress.Performance"/>
+
+    <!-- Custom configuration -->
+    <config name="minimum_supported_wp_version" value="5.9"/>
+    <config name="testVersion" value="7.4-"/>
+
+    <!-- Custom rules -->
+    <rule ref="Generic.CodeAnalysis.UnusedFunctionParameter"/>
+    <rule ref="Generic.Commenting.Todo"/>
+    <rule ref="Generic.ControlStructures.InlineControlStructure"/>
+    <rule ref="Generic.Formatting.DisallowMultipleStatements"/>
+    <rule ref="Generic.Functions.FunctionCallArgumentSpacing"/>
+    <rule ref="Generic.NamingConventions.UpperCaseConstantName"/>
+    <rule ref="Generic.PHP.DeprecatedFunctions"/>
+    <rule ref="Generic.PHP.DisallowShortOpenTag"/>
+    <rule ref="Generic.PHP.ForbiddenFunctions"/>
+    <rule ref="Generic.PHP.NoSilencedErrors"/>
+    <rule ref="Generic.Strings.UnnecessaryStringConcat"/>
+    <rule ref="Generic.WhiteSpace.DisallowTabIndent"/>
+
+    <!-- Relaxed rules for test files -->
+    <rule ref="WordPress.NamingConventions.ValidFunctionName">
+        <exclude-pattern>*/tests/*</exclude-pattern>
+    </rule>
+    
+    <rule ref="WordPress.NamingConventions.ValidVariableName">
+        <exclude-pattern>*/tests/*</exclude-pattern>
+    </rule>
+
+    <!-- Allow short array syntax -->
+    <rule ref="Generic.Arrays.DisallowLongArraySyntax"/>
+
+    <!-- Show progress -->
+    <arg value="p"/>
+    
+    <!-- Use colors -->
+    <arg name="colors"/>
+    
+    <!-- Show sniff names -->
+    <arg value="s"/>
+    
+    <!-- Parallel processing -->
+    <arg name="parallel" value="8"/>
+    
+    <!-- Extensions to check -->
+    <arg name="extensions" value="php"/>
+</ruleset>

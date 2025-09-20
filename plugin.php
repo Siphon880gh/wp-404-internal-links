@@ -31,8 +31,11 @@ class XnY_404_Links {
         add_action('wp_ajax_xny_fix_link', array($this, 'ajax_fix_link'));
         add_action('wp_ajax_xny_export_results', array($this, 'ajax_export_results'));
         
-        // Database setup
-        register_activation_hook(__FILE__, array($this, 'create_tables'));
+        // Fallback: create tables if they don't exist when admin is accessed
+        add_action('admin_init', array($this, 'check_and_create_tables'));
+        
+        // Hook for scheduled scan processing
+        add_action('xny_process_scan', array($this, 'process_scan'));
     }
 
     /**
@@ -211,6 +214,25 @@ class XnY_404_Links {
     }
 
     /**
+     * Check if tables exist and create them if they don't (fallback method)
+     */
+    public function check_and_create_tables() {
+        global $wpdb;
+        
+        $scans_table = $wpdb->prefix . 'xny_404_scans';
+        $links_table = $wpdb->prefix . 'xny_404_links';
+        
+        // Check if tables exist
+        $scans_exists = $wpdb->get_var("SHOW TABLES LIKE '$scans_table'") === $scans_table;
+        $links_exists = $wpdb->get_var("SHOW TABLES LIKE '$links_table'") === $links_table;
+        
+        // Create tables if they don't exist
+        if (!$scans_exists || !$links_exists) {
+            $this->create_tables();
+        }
+    }
+
+    /**
      * Create database tables for storing scan results
      */
     public function create_tables() {
@@ -273,6 +295,9 @@ class XnY_404_Links {
         global $wpdb;
         $table_name = $wpdb->prefix . 'xny_404_scans';
         
+        // Ensure tables exist before trying to insert
+        $this->check_and_create_tables();
+        
         // Create new scan record
         $scan_config = json_encode(array(
             'scan_depth' => $scan_depth,
@@ -290,7 +315,11 @@ class XnY_404_Links {
         );
         
         if ($result === false) {
-            wp_send_json_error('Failed to create scan record');
+            $error_message = 'Failed to create scan record';
+            if ($wpdb->last_error) {
+                $error_message .= ': ' . $wpdb->last_error;
+            }
+            wp_send_json_error($error_message);
         }
         
         $scan_id = $wpdb->insert_id;
@@ -308,6 +337,9 @@ class XnY_404_Links {
         
         // Start the actual scanning process
         wp_schedule_single_event(time(), 'xny_process_scan', array($scan_id));
+        
+        // Also start immediate processing for better user experience
+        $this->process_scan($scan_id);
         
         wp_send_json_success(array(
             'scan_id' => $scan_id,
@@ -540,7 +572,265 @@ class XnY_404_Links {
         
         wp_send_json_error('Unsupported export format');
     }
+
+    /**
+     * Process the actual link scanning
+     */
+    public function process_scan($scan_id) {
+        global $wpdb;
+        $links_table = $wpdb->prefix . 'xny_404_links';
+        $scans_table = $wpdb->prefix . 'xny_404_scans';
+        
+        // Get scan configuration
+        $scan = $wpdb->get_row($wpdb->prepare("SELECT * FROM $scans_table WHERE id = %d", $scan_id));
+        if (!$scan) {
+            return;
+        }
+        
+        $config = json_decode($scan->scan_config, true);
+        $scan_depth = $config['scan_depth'] ?? 2;
+        $max_pages = $config['max_pages'] ?? 100;
+        $include_external = $config['include_external'] ?? false;
+        
+        // Get posts to scan based on depth
+        $post_types = $this->get_post_types_for_scan($scan_depth);
+        $posts = get_posts(array(
+            'post_type' => $post_types,
+            'post_status' => 'publish',
+            'numberposts' => $max_pages,
+            'orderby' => 'date',
+            'order' => 'DESC'
+        ));
+        
+        $total_posts = count($posts);
+        $pages_scanned = 0;
+        $total_links = 0;
+        $broken_links = 0;
+        
+        foreach ($posts as $post) {
+            // Update progress
+            $pages_scanned++;
+            $this->update_scan_progress($scan_id, array(
+                'pages_scanned' => $pages_scanned,
+                'current_page' => $post->post_title,
+                'total_pages' => $total_posts
+            ));
+            
+            // Extract links from content
+            $links = $this->extract_links_from_content($post->post_content, $post->ID);
+            
+            foreach ($links as $link) {
+                $total_links++;
+                
+                // Test the link
+                $link_status = $this->test_link($link['url'], $include_external);
+                
+                if ($link_status['is_broken']) {
+                    $broken_links++;
+                    
+                    // Store broken link
+                    $wpdb->insert(
+                        $links_table,
+                        array(
+                            'scan_id' => $scan_id,
+                            'source_url' => get_permalink($post->ID),
+                            'target_url' => $link['url'],
+                            'link_text' => $link['text'],
+                            'status_code' => $link_status['status_code'],
+                            'error_message' => $link_status['error_message'],
+                            'is_broken' => 1,
+                            'found_at' => current_time('mysql')
+                        )
+                    );
+                }
+            }
+            
+            // Update progress with current stats
+            $this->update_scan_progress($scan_id, array(
+                'pages_scanned' => $pages_scanned,
+                'links_found' => $total_links,
+                'broken_found' => $broken_links,
+                'current_page' => $post->post_title,
+                'total_pages' => $total_posts
+            ));
+            
+            // Small delay to prevent server overload
+            usleep(100000); // 0.1 second
+        }
+        
+        // Mark scan as completed
+        $wpdb->update(
+            $scans_table,
+            array(
+                'status' => 'completed',
+                'total_pages' => $total_posts,
+                'total_links' => $total_links,
+                'broken_links' => $broken_links,
+                'completed_at' => current_time('mysql')
+            ),
+            array('id' => $scan_id)
+        );
+        
+        // Final progress update
+        $this->update_scan_progress($scan_id, array(
+            'status' => 'completed',
+            'pages_scanned' => $pages_scanned,
+            'links_found' => $total_links,
+            'broken_found' => $broken_links,
+            'current_page' => 'Scan completed',
+            'total_pages' => $total_posts
+        ));
+        
+        // Clean up
+        delete_option('xny_current_scan_id');
+    }
+    
+    /**
+     * Get post types based on scan depth
+     */
+    private function get_post_types_for_scan($depth) {
+        switch ($depth) {
+            case 1:
+                return array('page');
+            case 2:
+                return array('page', 'post');
+            case 3:
+                $post_types = get_post_types(array('public' => true));
+                return array_keys($post_types);
+            case 4:
+                $post_types = get_post_types(array('public' => true));
+                return array_keys($post_types);
+            default:
+                return array('page', 'post');
+        }
+    }
+    
+    /**
+     * Extract links from post content
+     */
+    private function extract_links_from_content($content, $post_id) {
+        $links = array();
+        $site_url = get_site_url();
+        
+        // Use DOMDocument to parse HTML and extract links
+        $dom = new DOMDocument();
+        @$dom->loadHTML('<?xml encoding="utf-8" ?>' . $content);
+        $xpath = new DOMXPath($dom);
+        $link_nodes = $xpath->query('//a[@href]');
+        
+        foreach ($link_nodes as $node) {
+            $href = $node->getAttribute('href');
+            $text = trim($node->textContent);
+            
+            // Skip empty links, anchors, and mailto links
+            if (empty($href) || $href[0] === '#' || strpos($href, 'mailto:') === 0) {
+                continue;
+            }
+            
+            // Convert relative URLs to absolute
+            if (strpos($href, 'http') !== 0) {
+                if ($href[0] === '/') {
+                    $href = $site_url . $href;
+                } else {
+                    $href = get_permalink($post_id) . $href;
+                }
+            }
+            
+            $links[] = array(
+                'url' => $href,
+                'text' => $text
+            );
+        }
+        
+        return $links;
+    }
+    
+    /**
+     * Test if a link is broken
+     */
+    private function test_link($url, $include_external = false) {
+        $site_url = get_site_url();
+        $is_internal = strpos($url, $site_url) === 0;
+        
+        // Skip external links if not included
+        if (!$is_internal && !$include_external) {
+            return array('is_broken' => false);
+        }
+        
+        // For internal links, check if the post/page exists
+        if ($is_internal) {
+            $path = str_replace($site_url, '', $url);
+            $path = trim($path, '/');
+            
+            // Try to get the post ID from the URL
+            $post_id = url_to_postid($url);
+            
+            if ($post_id > 0) {
+                $post = get_post($post_id);
+                if ($post && $post->post_status === 'publish') {
+                    return array('is_broken' => false);
+                }
+            }
+            
+            // If no post found, it's likely broken
+            return array(
+                'is_broken' => true,
+                'status_code' => 404,
+                'error_message' => 'Page not found'
+            );
+        }
+        
+        // For external links, make HTTP request
+        $response = wp_remote_head($url, array(
+            'timeout' => 10,
+            'redirection' => 5,
+            'user-agent' => 'WordPress Link Checker'
+        ));
+        
+        if (is_wp_error($response)) {
+            return array(
+                'is_broken' => true,
+                'status_code' => 0,
+                'error_message' => $response->get_error_message()
+            );
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        
+        // Consider 4xx and 5xx as broken
+        if ($status_code >= 400) {
+            return array(
+                'is_broken' => true,
+                'status_code' => $status_code,
+                'error_message' => wp_remote_retrieve_response_message($response)
+            );
+        }
+        
+        return array('is_broken' => false, 'status_code' => $status_code);
+    }
+    
+    /**
+     * Update scan progress
+     */
+    private function update_scan_progress($scan_id, $data) {
+        $progress = get_option('xny_scan_progress', '{}');
+        $progress_data = json_decode($progress, true);
+        
+        $progress_data = array_merge($progress_data, $data);
+        $progress_data['scan_id'] = $scan_id;
+        
+        update_option('xny_scan_progress', json_encode($progress_data));
+    }
 }
+
+/**
+ * Plugin activation hook - create tables
+ */
+function xny_404_links_activate() {
+    $plugin = new XnY_404_Links();
+    $plugin->create_tables();
+}
+register_activation_hook(__FILE__, 'xny_404_links_activate');
 
 /**
  * Initialize the plugin
