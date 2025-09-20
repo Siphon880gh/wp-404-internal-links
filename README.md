@@ -7,18 +7,23 @@
 
 ## 📖 Description
 
-By XnY (Weng Fei Fung). A comprehensive WordPress plugin that automatically detects and manages 404 broken internal links on your WordPress site. Improve your SEO and user experience by identifying and fixing broken internal links before they impact your visitors and search engine rankings.
+**XnY 404 Broken Internal Links** - A comprehensive WordPress plugin that automatically detects and manages broken internal links to improve SEO and user experience. Built by XnY (Weng Fei Fung).
 
-The plugin provides:
+**Core Capabilities:**
+• **Automated Link Scanning** - Deep scan of all internal links with configurable depth and limits
+• **Real-time Progress Tracking** - Live monitoring with detailed statistics during background processing  
+• **Advanced Reporting** - Filterable, searchable results table with status codes and error details
+• **Link Management Tools** - Fix, replace, or ignore broken links through intuitive modal interfaces
+• **CSV Export** - Export detailed scan results for external analysis and record-keeping
+• **Modern Admin Interface** - AJAX-powered tabbed dashboard with animations and responsive design
 
-- **Automated Link Scanning** - Deep scan of all internal links across your site
-- **Real-time Progress Tracking** - Monitor scan progress with detailed statistics
-- **Comprehensive Reporting** - Detailed breakdown of all broken links found
-- **Link Management Tools** - Fix, replace, or ignore broken links with ease
-- **Export Capabilities** - Export scan results to CSV for external analysis
-- **Modern Admin Interface** - Clean, responsive dashboard with intuitive navigation
+Perfect for agencies, freelancers, and site owners maintaining link integrity across WordPress websites.
 
-Perfect for agencies, freelancers, and site owners who need to maintain link integrity across their WordPress websites.
+---
+
+**📚 Documentation:**
+- [`context.md`](context.md) - Complete development context and architecture overview
+- [`context-features.md`](context-features.md) - Detailed feature analysis and UI components
 
 ---
 
